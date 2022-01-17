@@ -1,0 +1,204 @@
+#!/bin/sh
+
+##
+# - inspired by Thoughtbot's laptop script -
+# To turn your laptop into an awesome development machine.
+##
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+fancy_echo() {
+  local fmt="$1"; shift
+
+  # shellcheck disable=SC2059
+  printf "\\n$fmt\\n" "$@"
+}
+
+append_to_zshrc() {
+  local text="$1" zshrc
+  local skip_new_line="${2:-0}"
+
+  if [ -w "$HOME/.zshrc.local" ]; then
+    zshrc="$HOME/.zshrc.local"
+  else
+    zshrc="$HOME/.zshrc"
+  fi
+
+  if ! grep -Fqs "$text" "$zshrc"; then
+    if [ "$skip_new_line" -eq 1 ]; then
+      printf "%s\\n" "$text" >> "$zshrc"
+    else
+      printf "\\n%s\\n" "$text" >> "$zshrc"
+    fi
+  fi
+}
+
+update_shell() {
+  local shell_path;
+  shell_path="$(command -v zsh)"
+
+  fancy_echo "Changing your shell to zsh ..."
+  if ! grep "$shell_path" /etc/shells > /dev/null 2>&1 ; then
+    fancy_echo "Adding '$shell_path' to /etc/shells"
+    sudo sh -c "echo $shell_path >> /etc/shells"
+  fi
+  sudo chsh -s "$shell_path" "$USER"
+}
+
+# =============================================================================
+# INSTALLATION
+# =============================================================================
+
+# Require Xcode app before running this script
+xcode-select --install
+
+# Require ohmyzsh
+if [ ! -d "$HOME/.ohmyzsh" ]; then
+  fancy_echo "Installing ohmyzsh..."
+    sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+  return
+fi
+
+# shellcheck disable=SC2154
+trap 'ret=$?; test $ret -ne 0 && printf "failed\n\n" >&2; exit $ret' EXIT
+set -e
+
+# Set up required directories & files
+if [ ! $(grep -Fxq ".zshrc.local" "$HOME/.zshrc") ]; then 
+  # Prevent duplicate entries
+  if [[ ! "$HOME/.zshrc" =~ 'source $HOME/.zshrc.local' ]]; then
+    echo '[[ -f $HOME/.zshrc.local ]] && source $HOME/.zshrc.local' >> $HOME/.zshrc
+  fi
+fi
+[[ ! -d "$HOME/.bin" ]] && mkdir "$HOME/.bin"
+[[ ! -f "$HOME/.zshrc" ]] && touch "$HOME/.zshrc"
+[[ ! -f "$HOME/.zshrc.local" ]] && touch "$HOME/.zshrc.local"
+
+# shellcheck disable=SC2016
+[[ ! "$PATH" =~ "$HOME/.bin" ]] && append_to_zshrc 'export PATH="$HOME/.bin:$PATH"'
+
+# Change Shell to zsh
+case "$SHELL" in
+  */zsh)
+    if [ "$(command -v zsh)" != '/usr/local/bin/zsh' ] ; then
+      update_shell
+    fi
+    ;;
+  *)
+    update_shell
+    ;;
+esac
+
+# Install Homebrew
+if ! command -v brew >/dev/null; then
+  fancy_echo "Installing Homebrew ..."
+  /bin/bash -c \
+    "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
+
+  append_to_zshrc '# recommended by brew doctor'
+
+  # shellcheck disable=SC2016
+  [[ ! "$PATH" =~ "/opt/homebrew/bin" ]] && append_to_zshrc 'export PATH="/opt/homebrew/bin:$PATH"'
+  export PATH="/opt/homebrew/bin:$PATH"
+fi
+
+# Clean up old homebrew casks
+if brew list | grep -Fq brew-cask; then
+  fancy_echo "Uninstalling old Homebrew-Cask ..."
+  brew uninstall --force brew-cask
+fi
+
+# Install Homebrew Packages & Apps
+fancy_echo "Updating Homebrew formulae ..."
+brew update --force # https://github.com/Homebrew/brew/issues/1151
+brew bundle --file=- <<EOF
+cask_args appdir: '/Applications'
+
+tap 'homebrew/cask'
+tap 'homebrew/bundle'
+tap 'homebrew/services' # For 'brew service'
+tap 'homebrew/cask-fonts'
+
+# Packages
+brew 'autojump'
+brew 'bat'
+brew 'exa'
+brew 'fd'
+brew 'fzf'
+brew 'gh'
+brew 'git'
+brew 'git-delta'
+brew 'git-flow-avh'
+brew 'glab'
+brew 'glow'
+brew 'jq'
+brew 'n'
+brew 'neofetch'
+brew 'neovim'
+brew 'python3'
+brew 'rcm'
+brew 'sngrep'
+brew 'starship'
+brew 'tmux'
+brew 'zsh-autosuggestions'
+brew 'zsh-completions'
+brew 'zsh-history-substring-search'
+brew 'zsh-syntax-highlighting'
+cask 'font-hack-nerd-font'
+cask 'font-meslo-lg-nerd-font'
+cask 'font-sauce-code-pro-nerd-font'
+
+# Apps
+cask 'alacritty'
+cask 'android-file-transfer'
+cask 'android-studio'
+cask 'appcleaner'
+cask 'blockblock'
+cask 'brave-browser'
+cask 'discord'
+cask 'docker'
+cask 'google-drive'
+cask 'hiddenbar'
+cask 'iina'
+cask 'insomnia'
+cask 'key-codes'
+cask 'lulu'
+cask 'rectangle'
+cask 'slack'
+cask 'sourcetree'
+cask 'spotify'
+cask 'stats'
+cask 'suspicious-package'
+cask 'teamviewer'
+cask 'telegram'
+cask 'visual-studio-code'
+cask 'zoom'
+EOF
+
+# Set up directories for n (see https://github.com/tj/n for instructions)
+if [[ ! -d "$(brew --prefix)/bin/n" ]];then
+  # make cache folder (if missing) and take ownership
+  sudo mkdir -p /usr/local/n
+  sudo chown -R $(whoami) /usr/local/n
+  # make sure the required folders exist (safe to execute even if they already exist)
+  sudo mkdir -p /usr/local/bin /usr/local/lib /usr/local/include /usr/local/share
+  # take ownership of Node.js install destination folders
+  sudo chown -R $(whoami) /usr/local/bin /usr/local/lib /usr/local/include /usr/local/share
+fi
+
+# Run local customizations
+if [ -f "$HOME/.laptop.local" ]; then
+  fancy_echo "Running your customizations from ~/.laptop.local ..."
+  # shellcheck disable=SC1090
+  . "$HOME/.laptop.local"
+fi
+
+# Set up oh-my-tmux
+# https://github.com/gpakosz/.tmux
+git clone https://github.com/gpakosz/.tmux.git $HOME/.tmux
+ln -sf $HOME/.tmux/.tmux.conf $HOME/.tmux.conf
+cp $HOME/.tmux/.tmux.conf.local $HOME/.tmux.conf.local
+
+# Setup finished
+fancy_echo "Setup complete. Enjoy!"
